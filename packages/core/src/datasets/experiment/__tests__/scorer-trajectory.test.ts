@@ -266,6 +266,30 @@ describe('steps scorer config — per-step dispatch', () => {
     expect(echoResult?.stepId).toBe('echo');
   });
 
+  it('trajectory scorer on a workflow target without trace storage scores the steps that ran', async () => {
+    // No observability store here, so the trace lookup finds nothing. A workflow
+    // has no agent scoring output to fall back on; before the fix the scorer
+    // received { steps: [] } and scored a run that executed two steps as if it
+    // had executed none, with error: null.
+    const workflow = buildTwoStepWorkflow();
+    (mastra.getWorkflowById as ReturnType<typeof vi.fn>).mockReturnValue(workflow);
+    (mastra.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(workflow);
+
+    const scorer = createCapturingScorer('workflow-traj-scorer');
+
+    const result = await runExperiment(mastra, {
+      datasetId,
+      targetType: 'workflow',
+      targetId: 'two-step-wf',
+      scorers: [scorer],
+    });
+
+    expect(result.status).toBe('completed');
+    const output = scorer.capturedOutput as Trajectory;
+    expect(output.steps.map(s => s.name)).toEqual(['upper', 'echo']);
+    expect(output.steps.every(s => s.stepType === 'workflow_step')).toBe(true);
+  });
+
   it('retains completed output from a failed step scorer without persisting its recovered score', async () => {
     const workflow = buildTwoStepWorkflow();
     (mastra.getWorkflowById as ReturnType<typeof vi.fn>).mockReturnValue(workflow);
