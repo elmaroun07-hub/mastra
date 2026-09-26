@@ -1,7 +1,7 @@
 import { ScorerRunError } from '../../evals/base';
 import type { MastraScorer, ScorerStepName } from '../../evals/base';
 import type { NotScorableOutcome } from '../../evals/not-scorable';
-import { extractTrajectory, extractTrajectoryFromTrace } from '../../evals/types';
+import { extractTrajectory, extractTrajectoryFromTrace, extractWorkflowTrajectory } from '../../evals/types';
 import type {
   ScorerRunInputForAgent,
   ScorerRunOutputForAgent,
@@ -196,12 +196,23 @@ export async function runScorersForItem(
 
   // Pre-extract trajectory once for all trajectory scorers in this batch.
   // Try the trace store first (requires observability storage + traceId), then
-  // fall back to extracting from the raw MastraDBMessage[] scoring output.
+  // fall back to the target's own record of what ran: step results for a
+  // workflow, the raw MastraDBMessage[] scoring output for an agent. A workflow
+  // has no scorerOutput, so without this branch it scored an empty trajectory
+  // whenever trace storage was unavailable — the same fallback runEvals uses.
   const hasTrajectoryScorer = scorers.some(s => s.type === 'trajectory');
   let trajectoryOutput: Trajectory | undefined;
   if (hasTrajectoryScorer) {
     const traceTrajectory = await extractTrajectoryFromStorage(storage, traceId);
-    trajectoryOutput = traceTrajectory ?? (scorerOutput ? extractTrajectory(scorerOutput) : { steps: [] });
+    if (traceTrajectory) {
+      trajectoryOutput = traceTrajectory;
+    } else if (targetType === 'workflow') {
+      trajectoryOutput = workflowData?.stepResults
+        ? extractWorkflowTrajectory(workflowData.stepResults, workflowData.stepExecutionPath)
+        : { steps: [] };
+    } else {
+      trajectoryOutput = scorerOutput ? extractTrajectory(scorerOutput) : { steps: [] };
+    }
   }
 
   // Build correlation context so scorers can emit scores with full experiment context
